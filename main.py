@@ -29,7 +29,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field # Although Pydantic is imported, it's not strictly used for tool definitions here, but good for future expansion.
 
 # Load environment variables
 load_dotenv()
@@ -40,12 +40,36 @@ console = Console()
 # File size limit (1MB)
 MAX_FILE_SIZE = 1024 * 1024
 
+# System prompt for Gemini Engineer - defines AI's role and capabilities
+SYSTEM_PROMPT = """You are Gemini Engineer, an AI assistant with access to powerful file operation tools.
+
+CRITICAL RULE: When the user asks you to create, build, generate, or make files, you MUST use the available function tools. Never just output code - always create actual files!
+
+Available tools:
+- create_file: Create a single file
+- create_multiple_files: Create multiple files at once
+- read_file: Read a file
+- edit_file: Edit existing files
+
+MANDATORY BEHAVIOR:
+1. When user asks for file creation: IMMEDIATELY use create_file or create_multiple_files tools
+2. When user asks to create projects: Use create_multiple_files with all necessary files
+3. When user asks to read files: Use read_file tool
+4. When user asks to modify files: Use edit_file tool
+
+EXAMPLES OF WHEN TO USE TOOLS:
+- "Create an HTML file" → USE create_file tool
+- "Build a web app" → USE create_multiple_files tool  
+- "Make a Python script" → USE create_file tool
+- "Generate a project" → USE create_multiple_files tool
+
+You MUST use tools for any file operations. Do not just describe what you would do - DO IT by calling the appropriate function!"""
+
 @dataclass
 class ConversationMessage:
     """Represents a message in the conversation history."""
-    role: str
-    content: str
-    timestamp: Optional[str] = None
+    role: str  # Can be 'user', 'assistant', 'system'
+    content: str  # Always a string for simplicity
 
 def normalize_path(file_path: str) -> Path:
     """Normalize and validate file path to prevent directory traversal."""
@@ -54,8 +78,10 @@ def normalize_path(file_path: str) -> Path:
     
     # Ensure the path is within the current working directory
     try:
-        path.relative_to(cwd)
-    except ValueError:
+        # Check if the resolved path starts with the current working directory
+        if not str(path).startswith(str(cwd)):
+            raise ValueError(f"Path {file_path} is outside the current directory")
+    except ValueError: # This can happen if path is on a different drive on Windows, etc.
         raise ValueError(f"Path {file_path} is outside the current directory")
     
     return path
@@ -67,17 +93,21 @@ def is_binary_file(file_path: Path) -> bool:
             chunk = f.read(1024)
             return b'\0' in chunk
     except Exception:
+        # If we can't read it, assume it's binary or inaccessible for safety
         return True
 
 def is_text_file(file_path: Path) -> bool:
     """Check if a file is a text file based on extension and content."""
-    if file_path.suffix.lower() in ['.txt', '.py', '.js', '.ts', '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.md', '.rst', '.sh', '.bat']:
+    # Common text file extensions
+    if file_path.suffix.lower() in ['.txt', '.py', '.js', '.ts', '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.md', '.rst', '.sh', '.bat', '.gitignore', '.env', '.toml']:
         return True
     
+    # Guess mimetype, if it's text, it's likely text
     mime_type, _ = mimetypes.guess_type(str(file_path))
     if mime_type and mime_type.startswith('text/'):
         return True
     
+    # Fallback to binary check
     return not is_binary_file(file_path)
 
 def read_local_file(file_path: str) -> Dict[str, Any]:
@@ -86,16 +116,16 @@ def read_local_file(file_path: str) -> Dict[str, Any]:
         path = normalize_path(file_path)
         
         if not path.exists():
-            return {"error": f"File {file_path} does not exist"}
+            return {"error": f"File '{file_path}' does not exist"}
         
         if not path.is_file():
-            return {"error": f"{file_path} is not a file"}
+            return {"error": f"'{file_path}' is not a file"}
         
         if path.stat().st_size > MAX_FILE_SIZE:
-            return {"error": f"File {file_path} is too large (max {MAX_FILE_SIZE} bytes)"}
+            return {"error": f"File '{file_path}' is too large (max {MAX_FILE_SIZE} bytes)"}
         
         if not is_text_file(path):
-            return {"error": f"File {file_path} appears to be binary"}
+            return {"error": f"File '{file_path}' appears to be binary or non-textual"}
         
         with open(path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -107,7 +137,7 @@ def read_local_file(file_path: str) -> Dict[str, Any]:
             "size": len(content)
         }
     except Exception as e:
-        return {"error": f"Failed to read {file_path}: {str(e)}"}
+        return {"error": f"Failed to read '{file_path}': {str(e)}"}
 
 def read_multiple_files(file_paths: List[str]) -> Dict[str, Any]:
     """Read contents of multiple files."""
@@ -117,7 +147,7 @@ def read_multiple_files(file_paths: List[str]) -> Dict[str, Any]:
     for file_path in file_paths:
         result = read_local_file(file_path)
         if "error" in result:
-            errors.append(f"{file_path}: {result['error']}")
+            errors.append(f"'{file_path}': {result['error']}")
         else:
             results[file_path] = result
     
@@ -142,10 +172,10 @@ def create_file(file_path: str, content: str) -> Dict[str, Any]:
             "success": True,
             "file_path": str(path),
             "size": len(content),
-            "message": f"File {file_path} created successfully"
+            "message": f"File '{file_path}' created successfully"
         }
     except Exception as e:
-        return {"error": f"Failed to create {file_path}: {str(e)}"}
+        return {"error": f"Failed to create '{file_path}': {str(e)}"}
 
 def create_multiple_files(files: List[Dict[str, str]]) -> Dict[str, Any]:
     """Create multiple files."""
@@ -159,7 +189,7 @@ def create_multiple_files(files: List[Dict[str, str]]) -> Dict[str, Any]:
         
         result = create_file(file_info["path"], file_info["content"])
         if "error" in result:
-            errors.append(f"{file_info['path']}: {result['error']}")
+            errors.append(f"'{file_info['path']}': {result['error']}")
         else:
             results[file_info["path"]] = result
     
@@ -175,17 +205,18 @@ def edit_file(file_path: str, original_snippet: str, new_snippet: str) -> Dict[s
         path = normalize_path(file_path)
         
         if not path.exists():
-            return {"error": f"File {file_path} does not exist"}
+            return {"error": f"File '{file_path}' does not exist"}
         
         # Read current content
         with open(path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         if original_snippet not in content:
-            return {"error": f"Original snippet not found in {file_path}"}
+            return {"error": f"Original snippet not found in '{file_path}'"}
         
         # Replace the snippet
-        new_content = content.replace(original_snippet, new_snippet)
+        # Use replace(..., 1) to replace only the first occurrence for safety
+        new_content = content.replace(original_snippet, new_snippet, 1) 
         
         # Write back to file
         with open(path, 'w', encoding='utf-8') as f:
@@ -194,7 +225,7 @@ def edit_file(file_path: str, original_snippet: str, new_snippet: str) -> Dict[s
         return {
             "success": True,
             "file_path": str(path),
-            "message": f"File {file_path} edited successfully",
+            "message": f"File '{file_path}' edited successfully",
             "changes": {
                 "original_length": len(content),
                 "new_length": len(new_content),
@@ -202,7 +233,7 @@ def edit_file(file_path: str, original_snippet: str, new_snippet: str) -> Dict[s
             }
         }
     except Exception as e:
-        return {"error": f"Failed to edit {file_path}: {str(e)}"}
+        return {"error": f"Failed to edit '{file_path}': {str(e)}"}
 
 def list_directory(dir_path: str = ".") -> Dict[str, Any]:
     """List contents of a directory."""
@@ -210,13 +241,17 @@ def list_directory(dir_path: str = ".") -> Dict[str, Any]:
         path = normalize_path(dir_path)
         
         if not path.exists():
-            return {"error": f"Directory {dir_path} does not exist"}
+            return {"error": f"Directory '{dir_path}' does not exist"}
         
         if not path.is_dir():
-            return {"error": f"{dir_path} is not a directory"}
+            return {"error": f"'{dir_path}' is not a directory"}
         
         items = []
         for item in path.iterdir():
+            # Exclude hidden files/directories and common ignored items
+            if item.name.startswith('.') or item.name in ['__pycache__', 'venv', 'node_modules']:
+                continue
+
             item_info = {
                 "name": item.name,
                 "type": "directory" if item.is_dir() else "file",
@@ -231,9 +266,9 @@ def list_directory(dir_path: str = ".") -> Dict[str, Any]:
             "count": len(items)
         }
     except Exception as e:
-        return {"error": f"Failed to list directory {dir_path}: {str(e)}"}
+        return {"error": f"Failed to list directory '{dir_path}': {str(e)}"}
 
-# Tool definitions for Gemini function calling
+# Tool definitions for Gemini function calling (function_declarations)
 TOOLS = [
     {
         "name": "read_file",
@@ -361,10 +396,14 @@ class GeminiEngineer:
         self.history = InMemoryHistory()
         self.setup_gemini_client()
         
+        # Add system prompt as the first message to guide AI behavior
+        self.conversation_history.append(ConversationMessage("system", SYSTEM_PROMPT))
+        
     def setup_gemini_client(self):
         """Initialize the Gemini client and model."""
         api_key = os.getenv('GEMINI_API_KEY')
-        model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-05-20')  # Default to gemini-2.5-flash-preview-05-20
+        # Default to a stable model that supports function calling
+        model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-05-20')
         
         if not api_key or api_key == 'your_api_key_here':
             self.console.print(Panel(
@@ -380,7 +419,7 @@ class GeminiEngineer:
             
         try:
             genai.configure(api_key=api_key)
-            # Use configurable model name from environment variable
+            # Use basic model initialization
             self.model = genai.GenerativeModel(model_name)
             self.console.print(f"[green]✅ Gemini client initialized successfully! (Model: {model_name})[/green]")
         except Exception as e:
@@ -393,11 +432,18 @@ class GeminiEngineer:
         banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                        🤖 GEMINI ENGINEER                    ║
-║                   AI-Driven Coding Assistant                 ║
+║                AI-Driven Software Architect                  ║
+║              Autonomous Project Generation System             ║
 ╚══════════════════════════════════════════════════════════════╝
         """
         
         instructions = """
+[bold cyan]Core Capabilities:[/bold cyan]
+• [green]Autonomous Project Generation[/green] - Create complete projects from high-level descriptions
+• [green]Software Architecture[/green] - Design and structure complex applications
+• [green]Code Analysis & Optimization[/green] - Review and improve existing code
+• [green]File Management[/green] - Comprehensive file operations with safety
+
 [bold cyan]Available Commands:[/bold cyan]
 • [yellow]/add <file_path>[/yellow] - Add a file to conversation context
 • [yellow]/add <folder_path>[/yellow] - Add all files in a folder to context
@@ -405,17 +451,17 @@ class GeminiEngineer:
 • [yellow]/help[/yellow] - Show this help message
 • [yellow]/clear[/yellow] - Clear conversation history
 
-[bold cyan]Features:[/bold cyan]
-• File system operations (read, create, edit files)
-• Code analysis and suggestions
-• Interactive file management
-• Streaming AI responses with function calling
+[bold cyan]Example Requests:[/bold cyan]
+• "Create a Flask API for a task manager with SQLite database"
+• "Build a React component library with TypeScript"
+• "Generate a Python CLI tool with argument parsing"
+• "Create a Node.js Express server with authentication"
 
-[bold green]Ready to assist with your coding tasks![/bold green]
+[bold green]Ready to architect and build your software projects![/bold green]
         """
         
         self.console.print(Panel(banner, style="bold blue"))
-        self.console.print(Panel(instructions, title="Getting Started", border_style="cyan"))
+        self.console.print(Panel(instructions, title="🚀 Getting Started", border_style="cyan"))
 
     def execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool function and return the result."""
@@ -426,6 +472,7 @@ class GeminiEngineer:
             tool_function = TOOL_FUNCTIONS[tool_name]
             
             # Execute the function with the provided parameters
+            # Handle list_directory with optional parameter
             if tool_name == "list_directory" and not parameters:
                 result = tool_function()
             else:
@@ -450,12 +497,59 @@ class GeminiEngineer:
                     title="File Read",
                     border_style="green"
                 ))
+            elif tool_name == "read_multiple_files":
+                table = Table(title="Files Read Successfully")
+                table.add_column("File Path", style="cyan")
+                table.add_column("Size (chars)", style="green")
+                
+                for file_path, file_result in result['files'].items():
+                    table.add_row(file_path, str(file_result['size']))
+                
+                self.console.print(table)
+                if result['errors']:
+                    self.console.print(Panel(
+                        "\n".join(result['errors']),
+                        title="Read Errors",
+                        border_style="yellow"
+                    ))
             elif tool_name == "create_file":
                 self.console.print(Panel(
                     f"[green]✅ {result['message']} ({result['size']} characters)[/green]",
                     title="File Created",
                     border_style="green"
                 ))
+            elif tool_name == "create_multiple_files":
+                if result.get('success'):
+                    table = Table(title="🎉 Project Files Created Successfully")
+                    table.add_column("File Path", style="cyan", no_wrap=False)
+                    table.add_column("Size (chars)", style="green")
+                    table.add_column("Status", style="bold green")
+                    
+                    total_files = 0
+                    total_size = 0
+                    
+                    for file_path, file_result in result['files'].items():
+                        table.add_row(
+                            file_path, 
+                            str(file_result['size']), 
+                            "✅ Created"
+                        )
+                        total_files += 1
+                        total_size += file_result['size']
+                    
+                    self.console.print(table)
+                    self.console.print(Panel(
+                        f"[bold green]📊 Summary: {total_files} files created, {total_size:,} total characters[/bold green]",
+                        title="Project Generation Complete",
+                        border_style="green"
+                    ))
+                
+                if result.get('errors'):
+                    self.console.print(Panel(
+                        "\n".join(result['errors']),
+                        title="Creation Errors",
+                        border_style="yellow"
+                    ))
             elif tool_name == "edit_file":
                 self.console.print(Panel(
                     f"[green]✅ {result['message']}[/green]\n"
@@ -481,118 +575,183 @@ class GeminiEngineer:
             # Add user message to history
             self.conversation_history.append(ConversationMessage("user", user_input))
             
-            # Prepare messages for Gemini
+            # If user is asking for file creation, add explicit tool usage instruction
+            if any(keyword in user_input.lower() for keyword in ["create", "build", "generate", "make", "html", "file", "project"]):
+                enhanced_input = f"{user_input}\n\nIMPORTANT: You MUST use the create_file or create_multiple_files function tools to actually create the files. Do not just describe the code - create the actual files!"
+                # Replace the last user message with the enhanced version
+                self.conversation_history[-1] = ConversationMessage("user", enhanced_input)
+            
+            # Prepare messages for Gemini API - convert all to basic format
             messages = []
             for msg in self.conversation_history:
-                if msg.role == "function":
-                    continue  # Skip function responses in this simplified version
-                messages.append({"role": msg.role, "parts": [msg.content]})
-            
-            # Start the generation
-            with Progress(SpinnerColumn(), TextColumn("[blue]Thinking..."), console=self.console) as progress:
+                if msg.role == "system":
+                    # Convert system message to user message for compatibility
+                    messages.append({"role": "user", "parts": [msg.content]})
+                elif msg.role == "assistant":
+                    messages.append({"role": "model", "parts": [msg.content]})
+                elif msg.role == "user":
+                    messages.append({"role": "user", "parts": [msg.content]})
+
+            with Progress(SpinnerColumn(), TextColumn("[blue]🤖 Analyzing and planning..."), console=self.console) as progress:
                 task = progress.add_task("processing", total=None)
                 
-                # Generate content with tools
                 try:
-                    response = self.model.generate_content(
+                    # Try with tools first
+                    response_stream = self.model.generate_content(
                         messages,
                         tools=[{"function_declarations": TOOLS}],
                         stream=True
                     )
                 except Exception as e:
-                    # Fallback to non-streaming if streaming fails
-                    self.console.print(f"[yellow]⚠️ Streaming failed, using regular response: {e}[/yellow]")
-                    response = self.model.generate_content(
-                        messages,
-                        tools=[{"function_declarations": TOOLS}],
-                        stream=False
-                    )
-                    response = [response]  # Make it iterable
+                    self.console.print(f"[yellow]⚠️ Streaming with tools failed: {e}[/yellow]")
+                    try:
+                        # Try without tools
+                        self.console.print(f"[yellow]Trying without tools...[/yellow]")
+                        response_stream = self.model.generate_content(
+                            messages,
+                            stream=True
+                        )
+                    except Exception as e2:
+                        # Final fallback to non-streaming without tools
+                        self.console.print(f"[yellow]⚠️ Streaming without tools failed, using non-streaming: {e2}[/yellow]")
+                        response_obj = self.model.generate_content(messages)
+                        response_stream = [response_obj]
                 
                 progress.remove_task(task)
-            
-            # Process the streaming response
+
+            # Process the response
             ai_response_parts = []
             tool_calls = []
             
-            for chunk in response:
-                if hasattr(chunk, 'text') and chunk.text:
-                    ai_response_parts.append(chunk.text)
-                    self.console.print(chunk.text, end="")
-                
-                # Check for function calls in the response
-                if hasattr(chunk, 'candidates') and chunk.candidates:
-                    for candidate in chunk.candidates:
-                        if hasattr(candidate, 'content') and candidate.content:
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'function_call') and part.function_call:
-                                    tool_calls.append(part.function_call)
+            for chunk in response_stream:
+                try:
+                    # Handle candidates structure - this is the main path for function calls
+                    if hasattr(chunk, 'candidates') and chunk.candidates:
+                        for candidate in chunk.candidates:
+                            if hasattr(candidate, 'content') and candidate.content:
+                                for part in candidate.content.parts:
+                                    # Handle function call parts FIRST (before trying text)
+                                    if hasattr(part, 'function_call') and part.function_call:
+                                        self.console.print(f"\n[green]📞 Function call detected: {part.function_call.name}[/green]")
+                                        tool_calls.append(part.function_call)
+                                    
+                                    # Handle text parts - but only if no function call in this part
+                                    elif hasattr(part, 'text'):
+                                        try:
+                                            text_content = part.text
+                                            if text_content:  # Only process if there's actual text
+                                                ai_response_parts.append(text_content)
+                                                self.console.print(text_content, end="")
+                                        except Exception as text_error:
+                                            # This part might contain something else
+                                            pass  # Silently skip text extraction errors
+                    
+                    # Fallback: Handle direct text attribute only if no candidates structure
+                    elif hasattr(chunk, 'text') and chunk.text:
+                        ai_response_parts.append(chunk.text)
+                        self.console.print(chunk.text, end="")
+                        
+                except Exception as e:
+                    # Skip problematic chunks instead of crashing
+                    continue
             
             if ai_response_parts:
-                ai_response = "".join(ai_response_parts)
-                self.conversation_history.append(ConversationMessage("assistant", ai_response))
+                ai_response_text = "".join(ai_response_parts)
+                self.console.print(f"\n[cyan dim]DEBUG: AI response text: {ai_response_text[:200]}...[/cyan dim]")
+                self.conversation_history.append(ConversationMessage("assistant", ai_response_text))
                 print()  # New line after streaming
             
             # Execute any tool calls
             if tool_calls:
                 self.console.print("\n[yellow]🔧 Executing tools...[/yellow]")
                 
-                for tool_call in tool_calls:
-                    tool_name = tool_call.name
-                    parameters = {}
-                    
-                    # Extract parameters from the function call
-                    if hasattr(tool_call, 'args') and tool_call.args:
-                        for key, value in tool_call.args.items():
-                            parameters[key] = value
-                    
-                    self.console.print(f"[cyan]▶ {tool_name}({', '.join(f'{k}={v}' for k, v in parameters.items())})[/cyan]")
-                    
-                    result = self.execute_tool(tool_name, parameters)
-                    self.display_tool_result(tool_name, result)
-                    
-                    # Create function response and continue conversation
-                    function_response_content = f"Function {tool_name} executed with result: {result}"
-                    
-                    # Get follow-up response from Gemini
-                    follow_up_messages = messages + [
-                        {"role": "assistant", "parts": [f"I'll call the {tool_name} function."]},
-                        {"role": "function", "parts": [function_response_content]}
-                    ]
-                    
+                for i, tool_call in enumerate(tool_calls, 1):
                     try:
-                        follow_up_response = self.model.generate_content(follow_up_messages, stream=True)
+                        tool_name = tool_call.name
                         
-                        follow_up_parts = []
-                        for chunk in follow_up_response:
-                            if hasattr(chunk, 'text') and chunk.text:
-                                follow_up_parts.append(chunk.text)
-                                self.console.print(chunk.text, end="")
+                        # Extract parameters - improved approach
+                        parameters = {}
+                        if hasattr(tool_call, 'args'):
+                            # Convert protobuf args to regular dict
+                            for key, value in tool_call.args.items():
+                                if hasattr(value, 'string_value'):
+                                    parameters[key] = value.string_value
+                                elif hasattr(value, 'list_value'):
+                                    # Handle list values (for create_multiple_files)
+                                    list_items = []
+                                    for item in value.list_value.values:
+                                        if hasattr(item, 'struct_value'):
+                                            struct_dict = {}
+                                            for struct_key, struct_val in item.struct_value.fields.items():
+                                                if hasattr(struct_val, 'string_value'):
+                                                    struct_dict[struct_key] = struct_val.string_value
+                                            list_items.append(struct_dict)
+                                    parameters[key] = list_items
+                                else:
+                                    parameters[key] = str(value)
                         
-                        if follow_up_parts:
-                            follow_up_text = "".join(follow_up_parts)
-                            self.conversation_history.append(ConversationMessage("assistant", follow_up_text))
+                        # Show tool execution with enhanced feedback
+                        if tool_name == "create_multiple_files":
+                            file_count = len(parameters.get('files', []))
+                            self.console.print(f"[cyan]▶ [{i}/{len(tool_calls)}] {tool_name} - Creating {file_count} files...[/cyan]")
+                        else:
+                            param_display = ', '.join(f'{k}={str(v)[:50]}...' if len(str(v)) > 50 else f'{k}={v}' for k, v in parameters.items())
+                            self.console.print(f"[cyan]▶ [{i}/{len(tool_calls)}] {tool_name}({param_display})[/cyan]")
+                        
+                        result = self.execute_tool(tool_name, parameters)
+                        self.display_tool_result(tool_name, result)
+                        
+                        # Simple follow-up after all tools are executed
+                        if i == len(tool_calls): 
+                            self.console.print(f"\n[blue]🤖 Processing results...[/blue]")
+                            
+                            # Create a simple follow-up message
+                            if result.get("success"):
+                                if tool_name == "create_multiple_files":
+                                    file_count = len(result.get('files', {}))
+                                    follow_up_content = f"I have successfully created {file_count} files. The project is ready!"
+                                else:
+                                    follow_up_content = f"I have successfully executed {tool_name}."
+                            else:
+                                follow_up_content = f"There was an issue with {tool_name}: {result.get('error', 'Unknown error')}"
+                            
+                            # Add the follow-up response
+                            self.conversation_history.append(ConversationMessage("assistant", follow_up_content))
+                            self.console.print(follow_up_content)
                             print()
+                                
                     except Exception as e:
-                        self.console.print(f"[yellow]⚠️ Follow-up response failed: {e}[/yellow]")
+                        self.console.print(f"[red]❌ Error processing tool call {i}: {e}[/red]")
+                        continue
+
+            else:
+                # If no tool calls were made, and user asked for creation, remind the AI
+                if any(keyword in user_input.lower() for keyword in ["create", "build", "generate", "make", "file", "project"]):
+                    self.console.print(f"\n[yellow]💡 Note: For creating files, the AI should use the create_multiple_files tool automatically.[/yellow]")
+                    self.console.print(f"[red]DEBUG: AI didn't use tools despite being asked to create something![/red]")
                         
         except Exception as e:
             self.console.print(f"\n[red]❌ Error during conversation: {e}[/red]")
-            # Try a simpler approach without function calling
+            # Fallback to a simple non-tool response if the main generation fails
             try:
+                self.console.print(f"\n[blue]Attempting simple response fallback...[/blue]")
                 simple_response = self.model.generate_content(user_input)
-                self.console.print(f"\n[blue]AI Response:[/blue] {simple_response.text}")
-                self.conversation_history.append(ConversationMessage("assistant", simple_response.text))
+                if hasattr(simple_response, 'text'):
+                    self.console.print(f"\n[blue]AI Response:[/blue] {simple_response.text}")
+                    self.conversation_history.append(ConversationMessage("assistant", simple_response.text))
+                else:
+                    self.console.print(f"[red]❌ Simple fallback returned no text.[/red]")
             except Exception as simple_e:
                 self.console.print(f"[red]❌ Simple fallback also failed: {simple_e}[/red]")
+
 
     def add_file_to_context(self, file_path: str):
         """Add a file or directory to the conversation context."""
         try:
-            path = Path(file_path)
+            path = normalize_path(file_path)
             
             if not path.exists():
-                self.console.print(f"[red]❌ Path {file_path} does not exist[/red]")
+                self.console.print(f"[red]❌ Path '{file_path}' does not exist[/red]")
                 return
             
             if path.is_file():
@@ -600,27 +759,34 @@ class GeminiEngineer:
                 if "error" in result:
                     self.console.print(f"[red]❌ {result['error']}[/red]")
                 else:
-                    content = f"File: {result['file_path']}\n```\n{result['content']}\n```"
-                    self.conversation_history.append(ConversationMessage("system", content))
-                    self.console.print(f"[green]✅ Added {path} to context[/green]")
+                    # Add file content as a user message for context
+                    content_text = f"File: {result['file_path']}\n```\n{result['content']}\n```"
+                    self.conversation_history.append(ConversationMessage("user", content_text))
+                    self.console.print(f"[green]✅ Added '{path}' to context[/green]")
             
             elif path.is_dir():
                 added_count = 0
-                for file_path in path.rglob("*"):
+                skipped_count = 0
+                for file_path in path.rglob("*"):  # Recursive glob
                     if file_path.is_file() and is_text_file(file_path):
                         try:
                             result = read_local_file(str(file_path))
                             if "success" in result:
-                                content = f"File: {result['file_path']}\n```\n{result['content']}\n```"
-                                self.conversation_history.append(ConversationMessage("system", content))
+                                content_text = f"File: {result['file_path']}\n```\n{result['content']}\n```"
+                                self.conversation_history.append(ConversationMessage("user", content_text))
                                 added_count += 1
-                        except Exception:
+                            else:
+                                skipped_count += 1
+                        except Exception as e:
+                            skipped_count += 1
                             continue
+                    elif file_path.is_file():  # If it's a file but not text
+                        skipped_count += 1
                 
-                self.console.print(f"[green]✅ Added {added_count} files from {path} to context[/green]")
+                self.console.print(f"[green]✅ Added {added_count} text files from '{path}' to context. Skipped {skipped_count} files (binary/non-text/errors).[/green]")
                 
         except Exception as e:
-            self.console.print(f"[red]❌ Error adding {file_path} to context: {e}[/red]")
+            self.console.print(f"[red]❌ Error adding '{file_path}' to context: {e}[/red]")
 
     def run_interactive_loop(self):
         """Run the main interactive loop."""
@@ -650,6 +816,8 @@ class GeminiEngineer:
                     
                     elif user_input.lower() == '/clear':
                         self.conversation_history.clear()
+                        # Re-add system prompt after clearing
+                        self.conversation_history.append(ConversationMessage("system", SYSTEM_PROMPT))
                         self.console.print("[green]✅ Conversation history cleared[/green]")
                         continue
                     
@@ -678,4 +846,5 @@ def main():
     app.run_interactive_loop()
 
 if __name__ == "__main__":
-    main() 
+    main()
+
