@@ -12,6 +12,10 @@ An interactive, AI-driven terminal application that acts as a software engineeri
 - **Streaming Responses**: Real-time AI responses with visual feedback
 - **Safety Features**: Built-in security checks to prevent directory traversal and handle binary files
 
+## 📷 CLI
+
+![ui.png](public/ui.png)
+
 ## 🚀 Quick Start
 
 ### Prerequisites

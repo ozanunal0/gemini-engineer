@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Snake Game</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #333;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            color: #eee;
+        }
+        canvas {
+            background-color: #000;
+            border: 2px solid #0f0;
+        }
+        #game-container {
+            text-align: center;
+        }
+        #score {
+            margin-top: 10px;
+            font-size: 1.5em;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <h1>Snake Game</h1>
+        <canvas id="gameCanvas" width="400" height="400"></canvas>
+        <div id="score">Score: 0</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+
+        const gridSize = 20;
+        let snake = [{x: 10, y: 10}];
+        let food = {};
+        let dx = 1;
+        let dy = 0;
+        let score = 0;
+        let gameInterval;
+        let gameSpeed = 100; // milliseconds
+
+        function generateFood() {
+            food = {
+                x: Math.floor(Math.random() * (canvas.width / gridSize)),
+                y: Math.floor(Math.random() * (canvas.height / gridSize))
+            };
+            // Ensure food does not spawn on the snake
+            for (let i = 0; i < snake.length; i++) {
+                if (snake[i].x === food.x && snake[i].y === food.y) {
+                    generateFood();
+                    return;
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw snake
+            ctx.fillStyle = 'lime';
+            snake.forEach(segment => {
+                ctx.fillRect(segment.x * gridSize, segment.y * gridSize, gridSize, gridSize);
+            });
+
+            // Draw food
+            ctx.fillStyle = 'red';
+            ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize, gridSize);
+        }
+
+        function update() {
+            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+
+            // Game over conditions
+            if (head.x < 0 || head.x >= canvas.width / gridSize ||
+                head.y < 0 || head.y >= canvas.height / gridSize ||
+                checkCollision(head)) {
+                clearInterval(gameInterval);
+                alert('Game Over! Your score: ' + score);
+                return;
+            }
+
+            snake.unshift(head); // Add new head
+
+            // Check if snake eats food
+            if (head.x === food.x && head.y === food.y) {
+                score++;
+                scoreDisplay.textContent = 'Score: ' + score;
+                generateFood();
+                // Increase speed slightly
+                gameSpeed = Math.max(50, gameSpeed - 5);
+                clearInterval(gameInterval);
+                startGameInterval();
+            } else {
+                snake.pop(); // Remove tail if no food eaten
+            }
+
+            draw();
+        }
+
+        function checkCollision(head) {
+            for (let i = 1; i < snake.length; i++) {
+                if (head.x === snake[i].x && head.y === snake[i].y) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function changeDirection(event) {
+            const keyPressed = event.keyCode;
+            const LEFT = 37;
+            const UP = 38;
+            const RIGHT = 39;
+            const DOWN = 40;
+
+            const goingUp = dy === -1;
+            const goingDown = dy === 1;
+            const goingRight = dx === 1;
+            const goingLeft = dx === -1;
+
+            if (keyPressed === LEFT && !goingRight) {
+                dx = -1;
+                dy = 0;
+            }
+            if (keyPressed === UP && !goingDown) {
+                dx = 0;
+                dy = -1;
+            }
+            if (keyPressed === RIGHT && !goingLeft) {
+                dx = 1;
+                dy = 0;
+            }
+            if (keyPressed === DOWN && !goingUp) {
+                dx = 0;
+                dy = 1;
+            }
+        }
+
+        function startGameInterval() {
+            gameInterval = setInterval(update, gameSpeed);
+        }
+
+        function initGame() {
+            generateFood();
+            document.addEventListener('keydown', changeDirection);
+            startGameInterval();
+        }
+
+        window.onload = initGame;
+    </script>
+</body>
+</html>
