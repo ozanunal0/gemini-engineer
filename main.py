@@ -40,6 +40,49 @@ console = Console()
 # File size limit (1MB)
 MAX_FILE_SIZE = 1024 * 1024
 
+# Comprehensive exclusion lists for file operations
+EXCLUDED_FILES = {
+    # Python specific
+    ".DS_Store", "Thumbs.db", ".gitignore", ".python-version",
+    "uv.lock", ".uv", "uvenv", ".uvenv", ".venv", "venv",
+    "__pycache__", ".pytest_cache", ".coverage", ".mypy_cache",
+    # Node.js / Web specific
+    "node_modules", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    ".next", ".nuxt", "dist", "build", ".cache", ".parcel-cache",
+    ".turbo", ".vercel", ".output", ".contentlayer",
+    # Build outputs
+    "out", "coverage", ".nyc_output", "storybook-static",
+    # Environment and config
+    ".env", ".env.local", ".env.development", ".env.production",
+    # Misc
+    ".git", ".svn", ".hg", "CVS"
+}
+
+EXCLUDED_EXTENSIONS = {
+    # Binary and media files
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".webp", ".avif",
+    ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg",
+    ".zip", ".tar", ".gz", ".7z", ".rar",
+    ".exe", ".dll", ".so", ".dylib", ".bin",
+    # Documents
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    # Python specific
+    ".pyc", ".pyo", ".pyd", ".egg", ".whl",
+    # UV specific
+    ".uv", ".uvenv",
+    # Database and logs
+    ".db", ".sqlite", ".sqlite3", ".log",
+    # IDE specific
+    ".idea", ".vscode",
+    # Web specific
+    ".map", ".chunk.js", ".chunk.css",
+    ".min.js", ".min.css", ".bundle.js", ".bundle.css",
+    # Cache and temp files
+    ".cache", ".tmp", ".temp",
+    # Font files
+    ".ttf", ".otf", ".woff", ".woff2", ".eot"
+}
+
 # System prompt for Gemini Engineer - defines AI's role and capabilities
 SYSTEM_PROMPT = """You are Gemini Engineer, an AI assistant with access to powerful file operation tools.
 
@@ -86,6 +129,33 @@ def normalize_path(file_path: str) -> Path:
     
     return path
 
+def should_exclude_file(file_path: Path) -> bool:
+    """Check if a file should be excluded from processing."""
+    # Check if file name is in excluded files
+    if file_path.name in EXCLUDED_FILES:
+        return True
+    
+    # Check if file extension is in excluded extensions
+    if file_path.suffix.lower() in EXCLUDED_EXTENSIONS:
+        return True
+    
+    # Check for compound extensions like .min.js, .chunk.css, etc.
+    filename_lower = file_path.name.lower()
+    for ext in EXCLUDED_EXTENSIONS:
+        if filename_lower.endswith(ext):
+            return True
+    
+    # Check if it's a hidden file (starts with .)
+    if file_path.name.startswith('.'):
+        return True
+    
+    # Check if any parent directory is in excluded files
+    for parent in file_path.parents:
+        if parent.name in EXCLUDED_FILES:
+            return True
+    
+    return False
+
 def is_binary_file(file_path: Path) -> bool:
     """Check if a file is binary."""
     try:
@@ -98,6 +168,10 @@ def is_binary_file(file_path: Path) -> bool:
 
 def is_text_file(file_path: Path) -> bool:
     """Check if a file is a text file based on extension and content."""
+    # First check if it's in excluded extensions (early return for performance)
+    if file_path.suffix.lower() in EXCLUDED_EXTENSIONS:
+        return False
+    
     # Common text file extensions
     if file_path.suffix.lower() in ['.txt', '.py', '.js', '.ts', '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.md', '.rst', '.sh', '.bat', '.gitignore', '.env', '.toml']:
         return True
@@ -248,8 +322,8 @@ def list_directory(dir_path: str = ".") -> Dict[str, Any]:
         
         items = []
         for item in path.iterdir():
-            # Exclude hidden files/directories and common ignored items
-            if item.name.startswith('.') or item.name in ['__pycache__', 'venv', 'node_modules']:
+            # Use comprehensive exclusion logic
+            if should_exclude_file(item):
                 continue
 
             item_info = {
@@ -768,6 +842,11 @@ class GeminiEngineer:
                 added_count = 0
                 skipped_count = 0
                 for file_path in path.rglob("*"):  # Recursive glob
+                    # Skip excluded files and directories
+                    if should_exclude_file(file_path):
+                        skipped_count += 1
+                        continue
+                    
                     if file_path.is_file() and is_text_file(file_path):
                         try:
                             result = read_local_file(str(file_path))
