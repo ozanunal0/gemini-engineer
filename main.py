@@ -477,7 +477,7 @@ class GeminiEngineer:
         """Initialize the Gemini client and model."""
         api_key = os.getenv('GEMINI_API_KEY')
         # Default to a stable model that supports function calling
-        model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-05-20')
+        model_name = os.getenv('GEMINI_MODEL')
         
         if not api_key or api_key == 'your_api_key_here':
             self.console.print(Panel(
@@ -507,7 +507,7 @@ class GeminiEngineer:
 ╔══════════════════════════════════════════════════════════════╗
 ║                        🤖 GEMINI ENGINEER                    ║
 ║                AI-Driven Software Architect                  ║
-║              Autonomous Project Generation System             ║
+║              Autonomous Project Generation System            ║
 ╚══════════════════════════════════════════════════════════════╝
         """
         
