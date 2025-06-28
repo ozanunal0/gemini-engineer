@@ -10,6 +10,7 @@ import os
 import sys
 import json
 import asyncio
+import warnings
 import mimetypes
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
@@ -30,6 +31,10 @@ from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field # Although Pydantic is imported, it's not strictly used for tool definitions here, but good for future expansion.
+
+
+# Suppress urllib3 SSL warnings that can interfere with MCP protocol
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL 1.1.1+")
 
 # Load environment variables
 load_dotenv()

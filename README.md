@@ -1,3 +1,5 @@
+![gemini-banner.png](public/gemini-banner.png)
+
 # 🤖 Gemini Engineer
 
 An interactive, AI-driven terminal application that acts as a software engineering assistant, leveraging Google's Gemini API with function calling capabilities to perform file system operations and provide intelligent coding assistance.
